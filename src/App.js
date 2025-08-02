@@ -1,12 +1,14 @@
 import React, { useEffect, useState } from "react";
-import { collection, getDocs, deleteDoc, doc } from "firebase/firestore";
+import { collection, getDocs, deleteDoc, doc, updateDoc } from "firebase/firestore";
 import { db } from "./firebase";
 
 function App() {
   const [requests, setRequests] = useState([]);
   const [loading, setLoading] = useState(true);
   const [deleting, setDeleting] = useState("");
+  const [completing, setCompleting] = useState("");
   const [searchTerm, setSearchTerm] = useState("");
+  const [filterStatus, setFilterStatus] = useState("all");
   const [selectedTab, setSelectedTab] = useState("overview");
   const [windowWidth, setWindowWidth] = useState(window.innerWidth);
 
@@ -50,14 +52,47 @@ function App() {
     }
   };
 
-  const filteredRequests = requests.filter(req =>
-    req.nome?.toLowerCase().includes(searchTerm.toLowerCase()) ||
-    req.localizacao?.toLowerCase().includes(searchTerm.toLowerCase()) ||
-    req.tipoLimpeza?.toLowerCase().includes(searchTerm.toLowerCase())
-  );
+  const handleComplete = async (id) => {
+    if (!window.confirm("Confirmar que a limpeza foi concluída?")) return;
+    setCompleting(id);
+    try {
+      await updateDoc(doc(db, "requests", id), {
+        status: "completed",
+        completedAt: new Date().toISOString(),
+      });
+      setRequests((prev) => 
+        prev.map((req) => 
+          req.id === id 
+            ? { ...req, status: "completed", completedAt: new Date().toISOString() }
+            : req
+        )
+      );
+    } catch (error) {
+      alert("Erro ao marcar como concluído: " + error.message);
+    } finally {
+      setCompleting("");
+    }
+  };
+
+  const filteredRequests = requests.filter(req => {
+    const matchesSearch = 
+      req.nome?.toLowerCase().includes(searchTerm.toLowerCase()) ||
+      req.localizacao?.toLowerCase().includes(searchTerm.toLowerCase()) ||
+      req.tipoLimpeza?.toLowerCase().includes(searchTerm.toLowerCase()) ||
+      req.numeroContato?.toLowerCase().includes(searchTerm.toLowerCase());
+    
+    const matchesStatus = 
+      filterStatus === "all" || 
+      (filterStatus === "pending" && (!req.status || req.status === "pending")) ||
+      (filterStatus === "completed" && req.status === "completed");
+    
+    return matchesSearch && matchesStatus;
+  });
 
   const stats = {
     total: requests.length,
+    pending: requests.filter(r => !r.status || r.status === "pending").length,
+    completed: requests.filter(r => r.status === "completed").length,
     residential: requests.filter(r => r.tipoLimpeza?.includes("Residencial")).length,
     commercial: requests.filter(r => r.tipoLimpeza?.includes("Comercial")).length,
   };
@@ -230,12 +265,13 @@ function App() {
     <div style={{ display: 'flex', flexDirection: 'column', gap: isMobile ? 16 : isTablet ? 20 : 24 }}>
       <div style={{ 
         display: 'grid', 
-        gridTemplateColumns: isMobile ? '1fr' : isTablet ? 'repeat(2, 1fr)' : 'repeat(3, 1fr)', 
+        gridTemplateColumns: isMobile ? '1fr' : isTablet ? 'repeat(2, 1fr)' : 'repeat(4, 1fr)', 
         gap: isMobile ? 12 : isTablet ? 16 : 20,
       }}>
         <StatsCard title="Total de Serviços" value={stats.total} icon="📋" color="#667eea" />
+        <StatsCard title="Pendentes" value={stats.pending} icon="⏳" color="#f59e0b" />
+        <StatsCard title="Concluídos" value={stats.completed} icon="✅" color="#10b981" />
         <StatsCard title="Residencial" value={stats.residential} icon="🏠" color="#f093fb" />
-        <StatsCard title="Comercial" value={stats.commercial} icon="🏢" color="#4facfe" />
       </div>
       
       <div style={{
@@ -250,33 +286,33 @@ function App() {
           color: '#1e293b', 
           fontSize: isMobile ? 16 : isTablet ? 17 : 18, 
           fontWeight: 600 
-        }}>Distribuição por Tipo</h3>
+        }}>Status dos Serviços</h3>
         <div style={{ display: 'flex', gap: 12, alignItems: 'center', flexWrap: 'wrap', marginBottom: 12 }}>
           <div style={{ 
             height: 6, 
-            background: '#667eea', 
-            width: `${(stats.residential / stats.total) * 100}%`, 
+            background: '#f59e0b', 
+            width: `${stats.total > 0 ? (stats.pending / stats.total) * 100 : 0}%`, 
             borderRadius: 3,
             minWidth: 16,
             maxWidth: '70%',
-            flex: stats.residential > 0 ? (stats.residential / stats.total) : 0,
+            flex: stats.pending > 0 ? (stats.pending / stats.total) : 0,
           }} />
           <span style={{ fontSize: isMobile ? 11 : 12, color: '#64748b', fontWeight: 500 }}>
-            {((stats.residential / stats.total) * 100).toFixed(1)}% Residencial
+            {stats.total > 0 ? ((stats.pending / stats.total) * 100).toFixed(1) : 0}% Pendentes
           </span>
         </div>
         <div style={{ display: 'flex', gap: 12, alignItems: 'center', flexWrap: 'wrap' }}>
           <div style={{ 
             height: 6, 
-            background: '#4facfe', 
-            width: `${(stats.commercial / stats.total) * 100}%`, 
+            background: '#10b981', 
+            width: `${stats.total > 0 ? (stats.completed / stats.total) * 100 : 0}%`, 
             borderRadius: 3,
             minWidth: 16,
             maxWidth: '70%',
-            flex: stats.commercial > 0 ? (stats.commercial / stats.total) : 0,
+            flex: stats.completed > 0 ? (stats.completed / stats.total) : 0,
           }} />
           <span style={{ fontSize: isMobile ? 11 : 12, color: '#64748b', fontWeight: 500 }}>
-            {((stats.commercial / stats.total) * 100).toFixed(1)}% Comercial
+            {stats.total > 0 ? ((stats.completed / stats.total) * 100).toFixed(1) : 0}% Concluídos
           </span>
         </div>
       </div>
@@ -297,7 +333,7 @@ function App() {
         alignItems: isMobile ? 'flex-start' : 'center', 
         marginBottom: isMobile ? 16 : 20,
         flexDirection: isMobile ? 'column' : 'row',
-        gap: isMobile ? 12 : 0,
+        gap: isMobile ? 12 : 16,
       }}>
         <h3 style={{ 
           margin: 0, 
@@ -305,21 +341,53 @@ function App() {
           fontSize: isMobile ? 16 : isTablet ? 17 : 18, 
           fontWeight: 600 
         }}>Lista de Serviços</h3>
-        <input
-          type="text"
-          placeholder="🔍 Buscar..."
-          value={searchTerm}
-          onChange={(e) => setSearchTerm(e.target.value)}
-          style={{
-            padding: isMobile ? '10px 14px' : '11px 15px',
-            border: '1px solid #e2e8f0',
-            borderRadius: 8,
-            fontSize: isMobile ? 13 : 14,
-            width: isMobile ? '100%' : isTablet ? '220px' : '260px',
-            outline: 'none',
-            background: '#fafbfc',
-          }}
-        />
+        
+        <div style={{ 
+          display: 'flex', 
+          gap: 12, 
+          alignItems: 'center',
+          flexDirection: isMobile ? 'column' : 'row',
+          width: isMobile ? '100%' : 'auto',
+        }}>
+          <select
+            value={filterStatus}
+            onChange={(e) => setFilterStatus(e.target.value)}
+            style={{
+              padding: isMobile ? '10px 14px' : '11px 15px',
+              border: '1px solid #e2e8f0',
+              borderRadius: 8,
+              fontSize: isMobile ? 13 : 14,
+              background: '#fafbfc',
+              outline: 'none',
+              cursor: 'pointer',
+              width: isMobile ? '100%' : '140px',
+            }}
+          >
+            <option value="all">Todos</option>
+            <option value="pending">Pendentes</option>
+            <option value="completed">Concluídos</option>
+          </select>
+          
+          <input
+            type="text"
+            placeholder="🔍 Buscar por nome, local..."
+            value={searchTerm}
+            onChange={(e) => setSearchTerm(e.target.value)}
+            autoComplete="off"
+            style={{
+              padding: isMobile ? '10px 14px' : '11px 15px',
+              border: '1px solid #e2e8f0',
+              borderRadius: 8,
+              fontSize: isMobile ? 13 : 14,
+              width: isMobile ? '100%' : isTablet ? '200px' : '240px',
+              outline: 'none',
+              background: '#fff',
+              transition: 'border-color 0.2s',
+            }}
+            onFocus={(e) => e.target.style.borderColor = '#667eea'}
+            onBlur={(e) => e.target.style.borderColor = '#e2e8f0'}
+          />
+        </div>
       </div>
       
       {loading ? (
@@ -347,7 +415,7 @@ function App() {
               <div style={{ fontSize: 13, color: '#64748b', marginBottom: 8 }}>
                 📍 {req.localizacao}
               </div>
-              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 8 }}>
                 <span style={{
                   padding: '3px 8px',
                   borderRadius: 12,
@@ -358,6 +426,38 @@ function App() {
                 }}>
                   {req.tipoLimpeza}
                 </span>
+                {req.status === 'completed' && (
+                  <span style={{
+                    padding: '3px 8px',
+                    borderRadius: 12,
+                    fontSize: 11,
+                    fontWeight: 500,
+                    background: '#10b98120',
+                    color: '#10b981',
+                  }}>
+                    ✅ Concluído
+                  </span>
+                )}
+              </div>
+              <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end' }}>
+                {(!req.status || req.status === 'pending') && (
+                  <button
+                    onClick={() => handleComplete(req.id)}
+                    disabled={completing === req.id}
+                    style={{
+                      background: completing === req.id ? '#10b98180' : '#10b981',
+                      color: '#fff',
+                      border: 'none',
+                      borderRadius: 5,
+                      padding: '6px 12px',
+                      fontSize: 11,
+                      fontWeight: 500,
+                      cursor: completing === req.id ? 'not-allowed' : 'pointer',
+                    }}
+                  >
+                    {completing === req.id ? 'Concluindo...' : '✅ Concluir'}
+                  </button>
+                )}
                 <button
                   onClick={() => handleDelete(req.id)}
                   disabled={deleting === req.id}
@@ -379,105 +479,165 @@ function App() {
           ))}
         </div>
       ) : (
-        // Desktop Table Layout
-        <div style={{ overflowX: 'auto' }}>
-          <table style={{ width: '100%', borderCollapse: 'collapse' }}>
-            <thead>
-              <tr style={{ borderBottom: '2px solid #f1f5f9' }}>
-                <th style={{ 
-                  padding: isTablet ? '12px 10px' : '14px 12px', 
-                  textAlign: 'left', 
-                  color: '#64748b', 
-                  fontWeight: 600, 
-                  fontSize: isTablet ? 12 : 13 
-                }}>NOME</th>
-                <th style={{ 
-                  padding: isTablet ? '12px 10px' : '14px 12px', 
-                  textAlign: 'left', 
-                  color: '#64748b', 
-                  fontWeight: 600, 
-                  fontSize: isTablet ? 12 : 13 
-                }}>CONTATO</th>
-                <th style={{ 
-                  padding: isTablet ? '12px 10px' : '14px 12px', 
-                  textAlign: 'left', 
-                  color: '#64748b', 
-                  fontWeight: 600, 
-                  fontSize: isTablet ? 12 : 13 
-                }}>LOCALIZAÇÃO</th>
-                <th style={{ 
-                  padding: isTablet ? '12px 10px' : '14px 12px', 
-                  textAlign: 'left', 
-                  color: '#64748b', 
-                  fontWeight: 600, 
-                  fontSize: isTablet ? 12 : 13 
-                }}>TIPO</th>
-                <th style={{ 
-                  padding: isTablet ? '12px 10px' : '14px 12px', 
-                  textAlign: 'center', 
-                  color: '#64748b', 
-                  fontWeight: 600, 
-                  fontSize: isTablet ? 12 : 13 
-                }}>AÇÕES</th>
-              </tr>
-            </thead>
-            <tbody>
-              {filteredRequests.map((req, index) => (
-                <tr key={req.id} style={{ 
-                  borderBottom: '1px solid #f1f5f9',
-                  background: index % 2 === 0 ? '#fafbfc' : '#fff',
-                }}>
-                  <td style={{ 
-                    padding: isTablet ? '12px 10px' : '14px 12px', 
-                    color: '#1e293b', 
+        // Desktop Card Layout Responsivo
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
+          {filteredRequests.map((req, index) => (
+            <div key={req.id} style={{
+              border: '1px solid #e2e8f0',
+              borderRadius: 8,
+              padding: isTablet ? 14 : 16,
+              background: index % 2 === 0 ? '#fafbfc' : '#fff',
+              display: 'flex',
+              flexDirection: isTablet ? 'column' : 'row',
+              alignItems: isTablet ? 'stretch' : 'center',
+              gap: isTablet ? 12 : 16,
+            }}>
+              {/* Informações principais */}
+              <div style={{ 
+                flex: 1, 
+                display: 'grid', 
+                gridTemplateColumns: isTablet ? '1fr 1fr' : '2fr 1.5fr 2fr 1fr',
+                gap: isTablet ? 12 : 16,
+                alignItems: 'center',
+                minWidth: 0,
+              }}>
+                <div>
+                  <div style={{ fontSize: isTablet ? 11 : 12, color: '#64748b', fontWeight: 500, marginBottom: 2 }}>
+                    NOME
+                  </div>
+                  <div style={{ fontSize: isTablet ? 13 : 14, color: '#1e293b', fontWeight: 600 }}>
+                    {req.nome}
+                  </div>
+                </div>
+                
+                <div>
+                  <div style={{ fontSize: isTablet ? 11 : 12, color: '#64748b', fontWeight: 500, marginBottom: 2 }}>
+                    CONTATO
+                  </div>
+                  <div style={{ fontSize: isTablet ? 13 : 14, color: '#64748b' }}>
+                    {req.numeroContato}
+                  </div>
+                </div>
+                
+                <div style={{ gridColumn: isTablet ? '1 / -1' : 'auto' }}>
+                  <div style={{ fontSize: isTablet ? 11 : 12, color: '#64748b', fontWeight: 500, marginBottom: 2 }}>
+                    LOCALIZAÇÃO
+                  </div>
+                  <div style={{ fontSize: isTablet ? 13 : 14, color: '#64748b' }}>
+                    {req.localizacao}
+                  </div>
+                </div>
+                
+                <div>
+                  <div style={{ fontSize: isTablet ? 11 : 12, color: '#64748b', fontWeight: 500, marginBottom: 2 }}>
+                    TIPO
+                  </div>
+                  <span style={{
+                    padding: '3px 8px',
+                    borderRadius: 12,
+                    fontSize: isTablet ? 10 : 11,
                     fontWeight: 500,
-                    fontSize: isTablet ? 13 : 14,
-                  }}>{req.nome}</td>
-                  <td style={{ 
-                    padding: isTablet ? '12px 10px' : '14px 12px', 
-                    color: '#64748b',
-                    fontSize: isTablet ? 13 : 14,
-                  }}>{req.numeroContato}</td>
-                  <td style={{ 
-                    padding: isTablet ? '12px 10px' : '14px 12px', 
-                    color: '#64748b',
-                    fontSize: isTablet ? 13 : 14,
-                  }}>{req.localizacao}</td>
-                  <td style={{ padding: isTablet ? '12px 10px' : '14px 12px' }}>
+                    background: req.tipoLimpeza?.includes('Residencial') ? '#667eea20' : '#4facfe20',
+                    color: req.tipoLimpeza?.includes('Residencial') ? '#667eea' : '#4facfe',
+                    display: 'inline-block',
+                  }}>
+                    {req.tipoLimpeza}
+                  </span>
+                </div>
+              </div>
+              
+              {/* Status e Ações */}
+              <div style={{ 
+                display: 'flex', 
+                flexDirection: isTablet ? 'row' : 'column',
+                alignItems: 'center',
+                gap: isTablet ? 12 : 8,
+                minWidth: isTablet ? 'auto' : 180,
+                justifyContent: isTablet ? 'space-between' : 'center',
+              }}>
+                {/* Status */}
+                <div style={{ textAlign: 'center' }}>
+                  <div style={{ fontSize: isTablet ? 11 : 12, color: '#64748b', fontWeight: 500, marginBottom: 4 }}>
+                    STATUS
+                  </div>
+                  {req.status === 'completed' ? (
                     <span style={{
-                      padding: '3px 10px',
-                      borderRadius: 16,
-                      fontSize: isTablet ? 11 : 12,
+                      padding: '4px 8px',
+                      borderRadius: 12,
+                      fontSize: isTablet ? 10 : 11,
                       fontWeight: 500,
-                      background: req.tipoLimpeza?.includes('Residencial') ? '#667eea20' : '#4facfe20',
-                      color: req.tipoLimpeza?.includes('Residencial') ? '#667eea' : '#4facfe',
+                      background: '#10b98120',
+                      color: '#10b981',
+                      whiteSpace: 'nowrap',
                     }}>
-                      {req.tipoLimpeza}
+                      ✅ Concluído
                     </span>
-                  </td>
-                  <td style={{ padding: isTablet ? '12px 10px' : '14px 12px', textAlign: 'center' }}>
+                  ) : (
+                    <span style={{
+                      padding: '4px 8px',
+                      borderRadius: 12,
+                      fontSize: isTablet ? 10 : 11,
+                      fontWeight: 500,
+                      background: '#f59e0b20',
+                      color: '#f59e0b',
+                      whiteSpace: 'nowrap',
+                    }}>
+                      ⏳ Pendente
+                    </span>
+                  )}
+                </div>
+                
+                {/* Ações */}
+                <div style={{ 
+                  display: 'flex', 
+                  gap: 6, 
+                  flexDirection: isTablet ? 'row' : 'column',
+                  alignItems: 'center',
+                }}>
+                  {(!req.status || req.status === 'pending') && (
                     <button
-                      onClick={() => handleDelete(req.id)}
-                      disabled={deleting === req.id}
+                      onClick={() => handleComplete(req.id)}
+                      disabled={completing === req.id}
                       style={{
-                        background: deleting === req.id ? '#ef444480' : '#ef4444',
+                        background: completing === req.id ? '#10b98180' : '#10b981',
                         color: '#fff',
                         border: 'none',
-                        borderRadius: 6,
-                        padding: isTablet ? '6px 12px' : '7px 14px',
-                        fontSize: isTablet ? 11 : 12,
+                        borderRadius: 5,
+                        padding: isTablet ? '5px 8px' : '6px 10px',
+                        fontSize: isTablet ? 9 : 10,
                         fontWeight: 500,
-                        cursor: deleting === req.id ? 'not-allowed' : 'pointer',
+                        cursor: completing === req.id ? 'not-allowed' : 'pointer',
                         transition: 'all 0.2s',
+                        whiteSpace: 'nowrap',
+                        minWidth: isTablet ? 60 : 70,
                       }}
                     >
-                      {deleting === req.id ? 'Apagando...' : '🗑️ Apagar'}
+                      {completing === req.id ? 'Concluindo...' : '✅ Concluir'}
                     </button>
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
+                  )}
+                  <button
+                    onClick={() => handleDelete(req.id)}
+                    disabled={deleting === req.id}
+                    style={{
+                      background: deleting === req.id ? '#ef444480' : '#ef4444',
+                      color: '#fff',
+                      border: 'none',
+                      borderRadius: 5,
+                      padding: isTablet ? '5px 8px' : '6px 10px',
+                      fontSize: isTablet ? 9 : 10,
+                      fontWeight: 500,
+                      cursor: deleting === req.id ? 'not-allowed' : 'pointer',
+                      transition: 'all 0.2s',
+                      whiteSpace: 'nowrap',
+                      minWidth: isTablet ? 60 : 70,
+                    }}
+                  >
+                    {deleting === req.id ? 'Apagando...' : '🗑️ Apagar'}
+                  </button>
+                </div>
+              </div>
+            </div>
+          ))}
         </div>
       )}
     </div>
